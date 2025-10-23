@@ -1,3 +1,13 @@
+// helper: JSON response with CORS
+const j = (status, obj) =>
+  new Response(JSON.stringify(obj), {
+    status,
+    headers: {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+    },
+  });
+
 // netlify/functions/uploadInvoice.js
 export default async (req) => {
   // --- CORS ---
@@ -12,19 +22,17 @@ export default async (req) => {
     });
   }
   if (req.method !== "POST") {
-    return json({ error: "POST only" }, 405);
+    return j(405, { error: "POST only" });
   }
 
   const token = process.env.DROPBOX_ACCESS_TOKEN;
   const basePath = process.env.DROPBOX_INVOICE_PATH || "/invoices";
-  if (!token) return json({ error: "Missing DROPBOX_ACCESS_TOKEN" }, 500);
+  if (!token) return j(500, { error: "Missing DROPBOX_ACCESS_TOKEN" });
 
   try {
     const { filename, content_base64, content_type = "text/html" } = await req.json();
 
-    if (!filename || !content_base64) {
-      return json({ error: "filename and content_base64 required" }, 400);
-    }
+    if (!filename || !content_base64) { return j(400, { error: "filename and content_base64 required" }); }
 
     const bytes = Buffer.from(content_base64, "base64");
     const path = `${basePath}/${filename}`;
@@ -47,7 +55,7 @@ export default async (req) => {
       });
       if (!uploadRes.ok) {
         const t = await uploadRes.text();
-        return json({ error: "Upload failed", details: t }, 502);
+         json({ error: "Upload failed", details: t }, 502);
       }
     }
 
@@ -79,21 +87,19 @@ export default async (req) => {
       });
       if (!list.ok) {
         const t = await list.text();
-        return json({ error: "Link fetch failed", details: t }, 502);
+         json({ error: "Link fetch failed", details: t }, 502);
       }
       const data = await list.json();
       shared = (data && data.links && data.links[0]) || null;
-      if (!shared) return json({ error: "No shared link found" }, 500);
+      if (!shared)  json({ error: "No shared link found" }, 500);
     }
 
     // 3) Convert to direct URL
     const rawUrl = (shared.url || "").replace("?dl=0", "?raw=1");
 
-    return json({ url: rawUrl }, 200);
+     json({ url: rawUrl }, 200);
   } catch (e) {
-    return json({ error: "Server error", details: String(e) }, 500);
-  }
-};
+    return j(500, { error: e.message || String(e) });
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
