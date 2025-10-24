@@ -1,145 +1,152 @@
-// /netlify/functions/uploadInvoice.js
-import chromium from "@sparticuz/chromium";
-import puppeteer from "puppeteer-core";
+// netlify/functions/uploadInvoice.js
+// Purpose: receive a PDF (base64) from the browser, upload to Dropbox, return a public URL.
+// No HTML rendering. No Puppeteer. Just storage.
+//
+// Env vars required in Netlify -> Project -> Environment variables:
+//   DROPBOX_ACCESS_TOKEN      (App access token)
+// Optional:
+//   DROPBOX_INVOICE_PATH      (e.g. "/invoices"; defaults to "/invoices")
+//
+// Request (POST JSON):
+//   {
+//     "filename": "YourCompany_Quote_INV-20251024-0001.pdf",
+//     "content_base64": "<BASE64-PDF>",
+//     "content_type": "application/pdf"
+//   }
+//
+// Response (200 JSON):
+//   { "url": "https://www.dropbox.com/s/....?raw=1" }
 
-const ok = (data, init={}) =>
-  new Response(JSON.stringify(data), { status: 200, headers: { "content-type":"application/json", "access-control-allow-origin":"*", "access-control-allow-headers":"content-type" }, ...init });
+const JSON_HEADERS = {
+  "Content-Type": "application/json",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
 
-const bad = (code, msg) =>
-  new Response(JSON.stringify({ error: msg }), { status: code, headers: { "content-type":"application/json", "access-control-allow-origin":"*" } });
+const json = (status, obj) =>
+  new Response(JSON.stringify(obj), { status, headers: JSON_HEADERS });
 
 export default async (req) => {
+  // CORS preflight
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: {
-      "access-control-allow-origin":"*",
-      "access-control-allow-methods":"POST, OPTIONS",
-      "access-control-allow-headers":"content-type"
-    }});
+    return new Response(null, { status: 204, headers: JSON_HEADERS });
   }
-  if (req.method !== "POST") return bad(405, "POST only");
+
+  if (req.method !== "POST") {
+    return json(405, { error: "POST only" });
+  }
 
   const token = process.env.DROPBOX_ACCESS_TOKEN;
   const basePath = process.env.DROPBOX_INVOICE_PATH || "/invoices";
-  if (!token) return bad(500, "Missing DROPBOX_ACCESS_TOKEN");
+  if (!token) {
+    return json(500, { error: "Missing DROPBOX_ACCESS_TOKEN" });
+  }
 
   let body;
-  try { body = await req.json(); } catch { return bad(400, "Invalid JSON"); }
-
-  const {
-    filename = `Invoice_${Date.now()}.pdf`,
-    html,                 // raw HTML to render (preferred)
-    title = "Invoice",
-    // Optional fallbacks if caller only has base64 html
-    html_base64
-  } = body || {};
-
-  const rawHTML = html || (html_base64 ? Buffer.from(html_base64, "base64").toString("utf8") : "");
-  if (!rawHTML) return bad(400, "html or html_base64 required");
-
-  // --- Render A4 PDF with headless Chrome (no clipping) ---
-  let browser, pdfBytes;
   try {
-    const execPath = await chromium.executablePath();
-
-    browser = await puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: { width: 794, height: 1123, deviceScaleFactor: 2 }, // A4 @ 96dpi, crisp
-      executablePath: execPath,
-      headless: chromium.headless,
-    });
-
-    const page = await browser.newPage();
-
-    // Inject A4 CSS to avoid overflow/cropping
-    const htmlForPdf = /* html */`
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <title>${title}</title>
-          <style>
-            @page { size: A4; margin: 16mm; }
-            html, body { width: 210mm; height: 297mm; margin: 0; }
-            /* prevent accidental clipping */
-            body { overflow: visible !important; }
-            *, *::before, *::after { box-sizing: border-box; }
-          </style>
-        </head>
-        <body>${rawHTML}</body>
-      </html>
-    `;
-
-    await page.setContent(htmlForPdf, { waitUntil: ["domcontentloaded","networkidle0"] });
-    await page.emulateMediaType("screen");
-
-    pdfBytes = await page.pdf({
-      format: "A4",
-      margin: { top: "16mm", right: "16mm", bottom: "16mm", left: "16mm" },
-      printBackground: true,
-      preferCSSPageSize: true,
-    });
-
-    await page.close();
-    await browser.close();
-  } catch (e) {
-    try { if (browser) await browser.close(); } catch {}
-    return bad(500, "PDF render failed: " + (e?.message || e));
+    body = await req.json();
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
   }
 
-  // --- Upload to Dropbox as PDF ---
-  const dropboxPath = `${basePath}/${filename.endsWith(".pdf") ? filename : (filename + ".pdf")}`;
+  const filename = String(body.filename || "invoice.pdf").replace(/[/\\]+/g, "_");
+  const b64 = body.content_base64;
+  const contentType = String(body.content_type || "").toLowerCase();
+
+  if (!b64 || !/^application\/pdf\b/.test(contentType)) {
+    return json(400, { error: "content_base64 (PDF) required" });
+  }
+
+  // Decode base64 to bytes
+  let bytes;
+  try {
+    bytes = Buffer.from(b64, "base64");
+  } catch {
+    return json(400, { error: "content_base64 is not valid base64" });
+  }
+
+  const dropboxUploadUrl = "https://content.dropboxapi.com/2/files/upload";
+  const targetPath = `${basePath}/${filename}`;
 
   try {
-    const uploadRes = await fetch("https://content.dropboxapi.com/2/files/upload", {
+    // 1) Upload file bytes
+    const upRes = await fetch(dropboxUploadUrl, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/octet-stream",
         "Dropbox-API-Arg": JSON.stringify({
-          path: dropboxPath,
-          mode: { ".tag": "overwrite" },
+          path: targetPath,
+          mode: "overwrite",      // overwrite same filename
+          autorename: false,
           mute: true,
-          autorename: false
+          strict_conflict: false,
         }),
       },
-      body: pdfBytes
+      body: bytes,
     });
-    if (!uploadRes.ok) {
-      const t = await uploadRes.text();
-      return bad(502, `Dropbox upload_failed: ${t}`);
+
+    if (!upRes.ok) {
+      const t = await upRes.text().catch(() => "");
+      return json(502, { error: "upload_failed", detail: t });
     }
 
-    const shareRes = await fetch("https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ path: dropboxPath, settings: { requested_visibility: "public" } })
-    });
+    const uploaded = await upRes.json();
+    const pathLower = uploaded.path_lower || targetPath.toLowerCase();
 
-    let url;
-    if (shareRes.ok) {
-      const j = await shareRes.json();
-      url = String(j?.url || "").replace("?dl=0","?dl=1"); // direct download
-    } else {
-      // Link already exists? fetch it
-      const list = await fetch("https://api.dropboxapi.com/2/sharing/list_shared_links", {
+    // 2) Create/get a shared link
+    const createLinkRes = await fetch(
+      "https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings",
+      {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json"
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify({ path: dropboxPath, direct_only: true })
-      });
-      const j = await list.json();
-      url = String(j?.links?.[0]?.url || "").replace("?dl=0","?dl=1");
+        body: JSON.stringify({
+          path: pathLower,
+          settings: { requested_visibility: "public" },
+        }),
+      }
+    );
+
+    let url = "";
+    if (createLinkRes.ok) {
+      const data = await createLinkRes.json();
+      url = data.url || "";
+    } else {
+      // If link already exists, list and reuse it
+      const txt = await createLinkRes.text().catch(() => "");
+      if (txt.includes("shared_link_already_exists")) {
+        const listRes = await fetch(
+          "https://api.dropboxapi.com/2/sharing/list_shared_links",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ path: pathLower, direct_only: true }),
+          }
+        );
+        if (!listRes.ok) {
+          const t2 = await listRes.text().catch(() => "");
+          return json(502, { error: "link_list_failed", detail: t2 });
+        }
+        const listData = await listRes.json();
+        url = (listData.links && listData.links[0] && listData.links[0].url) || "";
+        if (!url) return json(502, { error: "no_shared_link_found" });
+      } else {
+        return json(502, { error: "link_create_failed", detail: txt });
+      }
     }
 
-    if (!url) return bad(502, "Could not obtain shared link");
+    // Make it render directly in browser
+    const direct = url.replace("?dl=0", "?raw=1");
 
-    return ok({ url, path: dropboxPath });
+    return json(200, { url: direct });
   } catch (e) {
-    return bad(502, "Dropbox error: " + (e?.message || e));
+    return json(500, { error: "unexpected", detail: String(e?.message || e) });
   }
-};
+}
