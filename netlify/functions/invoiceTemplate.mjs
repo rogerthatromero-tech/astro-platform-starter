@@ -1,36 +1,37 @@
 // netlify/functions/invoiceTemplate.mjs
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST,OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
 export default async (req, context) => {
   try {
+    // 1) Answer the preflight
+    if (req.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS });
+    }
+
     if (req.method !== 'POST') {
       return new Response(JSON.stringify({ error: 'POST required' }), {
         status: 405,
-        headers: { 'content-type': 'application/json' },
+        headers: { ...CORS, 'content-type': 'application/json' },
       });
     }
 
     const { q, info, invoiceLabel, companyName } = await req.json().catch(() => ({}));
     const items = Array.isArray(q?.items) ? q.items : [];
 
-    // Helpers (render-safe)
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (m) => ({
       '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
     }[m]));
-
     const money = (n) => {
       const num = typeof n === 'number' ? n : parseFloat(n || 0) || 0;
       return num.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
     };
+    const pick = (o, keys, def='') => { for (const k of keys) if (o && o[k] != null && o[k] !== '') return o[k]; return def; };
 
-    // Try to map item fields flexibly
-    const pick = (o, keys, def='') => {
-      for (const k of keys) if (o && o[k] != null && o[k] !== '') return o[k];
-      return def;
-    };
-
-    // Build table rows
-    let msrpSubtotal = 0;
-    let discountedSubtotal = 0;
-
+    let msrpSubtotal = 0, discountedSubtotal = 0;
     const rows = items.map((it) => {
       const productKind = pick(it, ['name','title','product','label','kind'], '');
       const model       = pick(it, ['model','sku','handle','code'], '');
@@ -40,12 +41,10 @@ export default async (req, context) => {
       const color       = pick(it, ['color','colour'], '');
       const qty         = Number(pick(it, ['qty','quantity'], 0)) || 0;
 
-      // Unit price: prefer discounted first, fall back to price/unit/MSRP
       const unitRaw     = pick(it, ['unit','unitPrice','price','msrp','unit_price'], 0);
       const unit        = Number(unitRaw) || 0;
 
       const lineTotal   = qty * unit;
-      // If you track both msrp and unit (discounted), sum both; else use unit for both
       const msrpUnit    = Number(pick(it, ['msrp','msrp_unit','unit_msrp'], unit)) || unit;
       const msrpTotal   = qty * msrpUnit;
 
@@ -63,8 +62,7 @@ export default async (req, context) => {
           <td style="text-align:right">${qty}</td>
           <td style="text-align:right">${money(unit)}</td>
           <td style="text-align:right">${money(lineTotal)}</td>
-        </tr>
-      `;
+        </tr>`;
     }).join('');
 
     const youSave = Math.max(0, msrpSubtotal - discountedSubtotal);
@@ -82,8 +80,6 @@ export default async (req, context) => {
       ].filter(Boolean).join('\n');
       return esc(lines);
     })();
-
-    const companyBlock = esc(companyName || 'Your Company');
 
     const html = `<!doctype html>
 <html>
@@ -118,7 +114,7 @@ tfoot td{font-weight:700}
     <div class="muted">${esc(invoiceLabel || '')} · Mode: ${esc(q?.mode || 'Individual')} · Tier: ${esc(q?.discountPct ?? 0)}% · Currency: USD</div>
     <div class="recipient">${customerBlock}</div>
   </div>
-  <div class="company"><p><strong>${companyBlock}</strong></p></div>
+  <div class="company"><p><strong>${esc(companyName || 'Your Company')}</strong></p></div>
 </header>
 
 <hr>
@@ -147,25 +143,20 @@ tfoot td{font-weight:700}
   </tfoot>
 </table>
 
-<div class="cta-row">
-  <!-- (Optional) you can place Pay now / View links here by extending the function -->
-</div>
+<div class="cta-row"></div>
 
 </body>
 </html>`;
 
     return new Response(html, {
       status: 200,
-      headers: {
-        'content-type': 'text/html; charset=utf-8',
-        'cache-control': 'no-store',
-      }
+      headers: { ...CORS, 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
     });
 
   } catch (e) {
     return new Response(JSON.stringify({ error: 'template_failed', detail: String(e?.message || e) }), {
       status: 500,
-      headers: { 'content-type': 'application/json' },
+      headers: { ...CORS, 'content-type': 'application/json' },
     });
   }
 };
