@@ -1,102 +1,91 @@
 // netlify/functions/invoiceTemplate.mjs
-export default async (req) => {
-  // --- CORS / preflight ---
-  if (req.method === "OPTIONS") {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Content-Type": "application/json",
-      },
-    });
-  }
-  if (req.method !== "POST") {
-    return json({ error: "POST only" }, 405);
-  }
-
-  let data;
+export default async (req, context) => {
   try {
-    data = await req.json();
-  } catch {
-    return json({ error: "Invalid JSON" }, 400);
-  }
+    if (req.method !== 'POST') {
+      return new Response(JSON.stringify({ error: 'POST required' }), {
+        status: 405,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
 
-  const {
-    invoice = {},
-    company = {},
-    recipient = {},
-    items = [],
-    totals = {},
-    links = {},
-    branding = {},
-  } = data || {};
+    const { q, info, invoiceLabel, companyName } = await req.json().catch(() => ({}));
+    const items = Array.isArray(q?.items) ? q.items : [];
 
-  // Minimal validation
-  if (!company.name || !Array.isArray(items)) {
-    return json({ error: "company.name and items[] required" }, 400);
-  }
+    // Helpers (render-safe)
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (m) => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[m]));
 
-  // Helpers
-  const esc = (s) =>
-    String(s ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
+    const money = (n) => {
+      const num = typeof n === 'number' ? n : parseFloat(n || 0) || 0;
+      return num.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    };
 
-  const num = (n, d = 2) =>
-    isFinite(+n) ? (+n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) : esc(n);
+    // Try to map item fields flexibly
+    const pick = (o, keys, def='') => {
+      for (const k of keys) if (o && o[k] != null && o[k] !== '') return o[k];
+      return def;
+    };
 
-  const h1 = branding.headline || `${company.name} — Quote`;
+    // Build table rows
+    let msrpSubtotal = 0;
+    let discountedSubtotal = 0;
 
-  const metaLine = [
-    invoice.label || "Invoice:",
-    invoice.number || "",
-    "· Mode:",
-    invoice.mode || "Individual",
-    "· Tier:",
-    (invoice.tierPct ?? 0) + "%",
-    "· Currency:",
-    invoice.currency || "USD",
-  ]
-    .filter(Boolean)
-    .join(" ");
+    const rows = items.map((it) => {
+      const productKind = pick(it, ['name','title','product','label','kind'], '');
+      const model       = pick(it, ['model','sku','handle','code'], '');
+      const size        = pick(it, ['size'], '');
+      const pieces      = pick(it, ['pieces','pcs'], '-');
+      const material    = pick(it, ['material'], '');
+      const color       = pick(it, ['color','colour'], '');
+      const qty         = Number(pick(it, ['qty','quantity'], 0)) || 0;
 
-  const recLines = [recipient.name, ...(recipient.lines || [])]
-    .filter(Boolean)
-    .map((l) => esc(l))
-    .join("\n");
+      // Unit price: prefer discounted first, fall back to price/unit/MSRP
+      const unitRaw     = pick(it, ['unit','unitPrice','price','msrp','unit_price'], 0);
+      const unit        = Number(unitRaw) || 0;
 
-  const companyBlock = [
-    `<p><strong>${esc(company.name)}</strong></p>`,
-    ...(company.lines || []).map((l) => `<p>${esc(l)}</p>`),
-    company.contact ? `<p>${esc(company.contact)}</p>` : "",
-  ].join("");
+      const lineTotal   = qty * unit;
+      // If you track both msrp and unit (discounted), sum both; else use unit for both
+      const msrpUnit    = Number(pick(it, ['msrp','msrp_unit','unit_msrp'], unit)) || unit;
+      const msrpTotal   = qty * msrpUnit;
 
-  const rows = items
-    .map((it) => {
-      const qty = it.qty ?? it.quantity ?? it.q ?? 0;
-      const unit = it.unit ?? it.price ?? it.unitPrice ?? 0;
-      const total = it.total ?? qty * unit;
+      msrpSubtotal      += msrpTotal;
+      discountedSubtotal+= lineTotal;
+
       return `
         <tr>
-          <td>${esc(it.label ?? it.name ?? "")}</td>
-          <td>${esc(it.model ?? it.sku ?? "")}</td>
-          <td>${esc(it.size ?? "")}</td>
-          <td>${esc(it.pieces ?? "-")}</td>
-          <td>${esc(it.material ?? "")}</td>
-          <td>${esc(it.color ?? "")}</td>
-          <td style="text-align:right">${num(qty, 0)}</td>
-          <td style="text-align:right">$${num(unit)}</td>
-          <td style="text-align:right">$${num(total)}</td>
-        </tr>`;
-    })
-    .join("");
+          <td>${esc(productKind)}</td>
+          <td>${esc(model)}</td>
+          <td>${esc(size)}</td>
+          <td>${esc(pieces)}</td>
+          <td>${esc(material)}</td>
+          <td>${esc(color)}</td>
+          <td style="text-align:right">${qty}</td>
+          <td style="text-align:right">${money(unit)}</td>
+          <td style="text-align:right">${money(lineTotal)}</td>
+        </tr>
+      `;
+    }).join('');
 
-  const html = `<!doctype html>
+    const youSave = Math.max(0, msrpSubtotal - discountedSubtotal);
+
+    const customerBlock = (() => {
+      const nm   = pick(info, ['name','fullName','customer_name','firstName'], '');
+      const org  = pick(info, ['company','organization'], '');
+      const ph   = pick(info, ['phone','tel','mobile'], '');
+      const em   = pick(info, ['email','mail'], '');
+      const lines = [
+        nm && esc(nm),
+        org && esc(org),
+        ph && `Phone: ${esc(ph)}`,
+        em && `Email: ${esc(em)}`
+      ].filter(Boolean).join('\n');
+      return esc(lines);
+    })();
+
+    const companyBlock = esc(companyName || 'Your Company');
+
+    const html = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -125,11 +114,11 @@ tfoot td{font-weight:700}
 
 <header>
   <div class="brand">
-    <h1>${esc(h1)}</h1>
-    <div class="muted">${esc(metaLine)}</div>
-    <div class="recipient">${recLines}</div>
+    <h1>${esc(companyName || 'Your Company')} — Quote</h1>
+    <div class="muted">${esc(invoiceLabel || '')} · Mode: ${esc(q?.mode || 'Individual')} · Tier: ${esc(q?.discountPct ?? 0)}% · Currency: USD</div>
+    <div class="recipient">${customerBlock}</div>
   </div>
-  <div class="company">${companyBlock}</div>
+  <div class="company"><p><strong>${companyBlock}</strong></p></div>
 </header>
 
 <hr>
@@ -152,31 +141,31 @@ tfoot td{font-weight:700}
     ${rows}
   </tbody>
   <tfoot>
-    <tr><td colspan="7">MSRP subtotal</td><td colspan="2" style="text-align:right">$${num(totals.msrpSubtotal ?? 0)}</td></tr>
-    <tr><td colspan="7">Discounted subtotal</td><td colspan="2" style="text-align:right">$${num(totals.discountedSubtotal ?? totals.subtotal ?? 0)}</td></tr>
-    <tr><td colspan="7">You save</td><td colspan="2" style="text-align:right">$${num(totals.youSave ?? 0)}</td></tr>
+    <tr><td colspan="7">MSRP subtotal</td><td colspan="2" style="text-align:right">${money(msrpSubtotal)}</td></tr>
+    <tr><td colspan="7">Discounted subtotal</td><td colspan="2" style="text-align:right">${money(discountedSubtotal)}</td></tr>
+    <tr><td colspan="7">You save</td><td colspan="2" style="text-align:right">${money(youSave)}</td></tr>
   </tfoot>
 </table>
 
 <div class="cta-row">
-  ${links.payNow ? `<a class="cta-primary" href="${esc(links.payNow)}">Pay now</a>` : ""}
-  ${links.viewDownload ? `<a class="cta-secondary" href="${esc(links.viewDownload)}">View &amp; download invoice</a>` : ""}
-  ${links.editOrder ? `<a class="cta-secondary" href="${esc(links.editOrder)}">Edit order</a>` : ""}
+  <!-- (Optional) you can place Pay now / View links here by extending the function -->
 </div>
 
 </body>
 </html>`;
 
-  return json({ html }, 200);
-};
+    return new Response(html, {
+      status: 200,
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+      }
+    });
 
-// Small JSON helper
-function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-    },
-  });
-}
+  } catch (e) {
+    return new Response(JSON.stringify({ error: 'template_failed', detail: String(e?.message || e) }), {
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+};
