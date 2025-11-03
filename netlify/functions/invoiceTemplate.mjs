@@ -1,87 +1,102 @@
 // netlify/functions/invoiceTemplate.mjs
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST,OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
+export default async (req) => {
+  // CORS
+  const cors = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  };
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: cors });
+  }
+  if (req.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405, headers: cors });
+  }
 
-export default async (req, context) => {
+  let payload;
   try {
-    // 1) Answer the preflight
-    if (req.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: CORS });
-    }
+    payload = await req.json();
+  } catch {
+    return new Response('Bad JSON', { status: 400, headers: cors });
+  }
 
-    if (req.method !== 'POST') {
-      return new Response(JSON.stringify({ error: 'POST required' }), {
-        status: 405,
-        headers: { ...CORS, 'content-type': 'application/json' },
-      });
-    }
+  const {
+    q = {},
+    info = null,
+    invoiceLabel = '',
+    companyName = '',
+    companyAddress = '',
+    companyCity = '',
+    companyEmail = '',
+    companyPhone = '',
+  } = payload || {};
 
-    const { q, info, invoiceLabel, companyName } = await req.json().catch(() => ({}));
-    const items = Array.isArray(q?.items) ? q.items : [];
+  const items = Array.isArray(q?.items) ? q.items : [];
 
-    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (m) => ({
-      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-    }[m]));
-    const money = (n) => {
-      const num = typeof n === 'number' ? n : parseFloat(n || 0) || 0;
-      return num.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-    };
-    const pick = (o, keys, def='') => { for (const k of keys) if (o && o[k] != null && o[k] !== '') return o[k]; return def; };
+  // Normalize each item to expected fields
+  const normItems = items.map((it) => {
+    const kind  = it.kind || it.name || '';
+    const model = it.model || '';
+    const size  = it.size  || '';
+    const pcs   = (it.pieces ?? it.pcs ?? '-') || '-';
+    const mat   = it.material || '';
+    const col   = it.color || '';
+    const qty   = Number(it.qty ?? it.quantity ?? 0) || 0;
+    let unit    = Number(it.price ?? it.unit ?? 0) || 0;
 
-    let msrpSubtotal = 0, discountedSubtotal = 0;
-    const rows = items.map((it) => {
-      const productKind = pick(it, ['name','title','product','label','kind'], '');
-      const model       = pick(it, ['model','sku','handle','code'], '');
-      const size        = pick(it, ['size'], '');
-      const pieces      = pick(it, ['pieces','pcs'], '-');
-      const material    = pick(it, ['material'], '');
-      const color       = pick(it, ['color','colour'], '');
-      const qty         = Number(pick(it, ['qty','quantity'], 0)) || 0;
+    // If no unit but a total is present, back-compute
+    const total = Number(it.total ?? 0) || (qty && unit ? qty * unit : 0);
+    if (!unit && qty && total) unit = +(total / qty).toFixed(2);
 
-      const unitRaw     = pick(it, ['unit','unitPrice','price','msrp','unit_price'], 0);
-      const unit        = Number(unitRaw) || 0;
+    return { kind, model, size, pcs, mat, col, qty, unit, total: qty * unit };
+  }).filter((r) => r.qty > 0);
 
-      const lineTotal   = qty * unit;
-      const msrpUnit    = Number(pick(it, ['msrp','msrp_unit','unit_msrp'], unit)) || unit;
-      const msrpTotal   = qty * msrpUnit;
+  // Money helpers
+  const money = (n) =>
+    (isFinite(n) ? n : 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
-      msrpSubtotal      += msrpTotal;
-      discountedSubtotal+= lineTotal;
+  const msrpSubtotal = normItems.reduce((s, r) => s + r.qty * r.unit, 0);
+  const discountedSubtotal = msrpSubtotal; // no discount math here (can wire later)
+  const saved = msrpSubtotal - discountedSubtotal;
 
-      return `
-        <tr>
-          <td>${esc(productKind)}</td>
-          <td>${esc(model)}</td>
-          <td>${esc(size)}</td>
-          <td>${esc(pieces)}</td>
-          <td>${esc(material)}</td>
-          <td>${esc(color)}</td>
-          <td style="text-align:right">${qty}</td>
-          <td style="text-align:right">${money(unit)}</td>
-          <td style="text-align:right">${money(lineTotal)}</td>
-        </tr>`;
-    }).join('');
+  // Customer block (info)
+  let recipientLines = [];
+  if (info) {
+    if (info.name) recipientLines.push(String(info.name));
+    if (info.company && info.company !== info.name) recipientLines.push(String(info.company));
+    if (info.phone) recipientLines.push(`Phone: ${info.phone}`);
+    if (info.email) recipientLines.push(`Email: ${info.email}`);
+    if (info.address) recipientLines.push(String(info.address));
+  }
+  const recipientHTML = recipientLines.join('\n') || 'Customer';
 
-    const youSave = Math.max(0, msrpSubtotal - discountedSubtotal);
+  // Company block
+  const companyHTMLParts = [];
+  if (companyName) companyHTMLParts.push(`<strong>${escapeHtml(companyName)}</strong>`);
+  if (companyAddress) companyHTMLParts.push(escapeHtml(companyAddress));
+  if (companyCity) companyHTMLParts.push(escapeHtml(companyCity));
+  const contactLine = [companyEmail, companyPhone].filter(Boolean).join(' · ');
+  if (contactLine) companyHTMLParts.push(escapeHtml(contactLine));
+  const companyBlock = companyHTMLParts.length
+    ? `<p>${companyHTMLParts.join('<br/>')}</p>`
+    : '<p><strong>Company</strong></p>';
 
-    const customerBlock = (() => {
-      const nm   = pick(info, ['name','fullName','customer_name','firstName'], '');
-      const org  = pick(info, ['company','organization'], '');
-      const ph   = pick(info, ['phone','tel','mobile'], '');
-      const em   = pick(info, ['email','mail'], '');
-      const lines = [
-        nm && esc(nm),
-        org && esc(org),
-        ph && `Phone: ${esc(ph)}`,
-        em && `Email: ${esc(em)}`
-      ].filter(Boolean).join('\n');
-      return esc(lines);
-    })();
+  // Build table rows
+  const rowsHTML = normItems.map((r) => {
+    return `<tr>
+      <td>${escapeHtml(r.kind)}</td>
+      <td>${escapeHtml(r.model)}</td>
+      <td>${escapeHtml(r.size)}</td>
+      <td>${escapeHtml(r.pcs)}</td>
+      <td>${escapeHtml(r.mat)}</td>
+      <td>${escapeHtml(r.col)}</td>
+      <td style="text-align:right">${r.qty}</td>
+      <td style="text-align:right">${money(r.unit)}</td>
+      <td style="text-align:right">${money(r.total)}</td>
+    </tr>`;
+  }).join('');
 
-    const html = `<!doctype html>
+  const html = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -110,11 +125,11 @@ tfoot td{font-weight:700}
 
 <header>
   <div class="brand">
-    <h1>${esc(companyName || 'Your Company')} — Quote</h1>
-    <div class="muted">${esc(invoiceLabel || '')} · Mode: ${esc(q?.mode || 'Individual')} · Tier: ${esc(q?.discountPct ?? 0)}% · Currency: USD</div>
-    <div class="recipient">${customerBlock}</div>
+    <h1>${escapeHtml(companyName || 'Quote')} — Quote</h1>
+    <div class="muted">${escapeHtml(invoiceLabel || '')} · Mode: ${escapeHtml(q?.mode || 'Individual')} · Tier: ${Number(q?.discountPct||0)}% · Currency: USD</div>
+    <div class="recipient">${escapeHtml(recipientHTML)}</div>
   </div>
-  <div class="company"><p><strong>${esc(companyName || 'Your Company')}</strong></p></div>
+  <div class="company">${companyBlock}</div>
 </header>
 
 <hr>
@@ -134,29 +149,34 @@ tfoot td{font-weight:700}
     </tr>
   </thead>
   <tbody>
-    ${rows}
+    ${rowsHTML}
   </tbody>
   <tfoot>
     <tr><td colspan="7">MSRP subtotal</td><td colspan="2" style="text-align:right">${money(msrpSubtotal)}</td></tr>
     <tr><td colspan="7">Discounted subtotal</td><td colspan="2" style="text-align:right">${money(discountedSubtotal)}</td></tr>
-    <tr><td colspan="7">You save</td><td colspan="2" style="text-align:right">${money(youSave)}</td></tr>
+    <tr><td colspan="7">You save</td><td colspan="2" style="text-align:right">${money(saved)}</td></tr>
   </tfoot>
 </table>
-
-<div class="cta-row"></div>
 
 </body>
 </html>`;
 
-    return new Response(html, {
-      status: 200,
-      headers: { ...CORS, 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
-    });
-
-  } catch (e) {
-    return new Response(JSON.stringify({ error: 'template_failed', detail: String(e?.message || e) }), {
-      status: 500,
-      headers: { ...CORS, 'content-type': 'application/json' },
-    });
-  }
+  return new Response(html, {
+    status: 200,
+    headers: {
+      ...cors,
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    }
+  });
 };
+
+// ---- utils ----
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
