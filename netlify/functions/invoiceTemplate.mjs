@@ -129,7 +129,13 @@ tfoot td{font-weight:700}
     <div class="muted">${escapeHtml(invoiceLabel || '')} · Mode: ${escapeHtml(q?.mode || 'Individual')} · Tier: ${Number(q?.discountPct||0)}% · Currency: USD</div>
     <div class="recipient">${escapeHtml(recipientHTML)}</div>
   </div>
-  <div class="company"><p><strong>Sensorite</strong></p></div>
+  <div class="company">
+  <p><strong>Sensorite</strong><br>
+  Block 39, Zhongji Zhicheng Industry Park,<br>
+  Yingguang, Lilin Town, Huizhou, China 516035<br>
+  sales@foxdanch.com · +86 (755) 8947-1769</p>
+</div>
+
 </header>
 
 <hr>
