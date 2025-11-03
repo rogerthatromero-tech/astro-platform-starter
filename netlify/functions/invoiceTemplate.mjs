@@ -45,17 +45,18 @@ export default async (req) => {
     let unit    = Number(it.price ?? it.unit ?? 0) || 0;
 
     // If no unit but a total is present, back-compute
-    const total = Number(it.total ?? 0) || (qty && unit ? qty * unit : 0);
-    if (!unit && qty && total) unit = +(total / qty).toFixed(2);
+    const totalGiven = Number(it.total ?? 0) || 0;
+    if (!unit && qty && totalGiven) unit = +(totalGiven / qty).toFixed(2);
 
-    return { kind, model, size, pcs, mat, col, qty, unit, total: qty * unit };
+    const total = qty * unit;
+    return { kind, model, size, pcs, mat, col, qty, unit, total };
   }).filter((r) => r.qty > 0);
 
   // Money helpers
   const money = (n) =>
     (isFinite(n) ? n : 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
-  const msrpSubtotal = normItems.reduce((s, r) => s + r.qty * r.unit, 0);
+  const msrpSubtotal = normItems.reduce((s, r) => s + r.total, 0);
   const discountedSubtotal = msrpSubtotal; // no discount math here (can wire later)
   const saved = msrpSubtotal - discountedSubtotal;
 
@@ -70,11 +71,11 @@ export default async (req) => {
   }
   const recipientHTML = recipientLines.join('\n') || 'Customer';
 
-  // Company block
+  // Company block (DYNAMIC)
   const companyHTMLParts = [];
-  if (companyName) companyHTMLParts.push(`<strong>${escapeHtml(companyName)}</strong>`);
+  if (companyName)  companyHTMLParts.push(`<strong>${escapeHtml(companyName)}</strong>`);
   if (companyAddress) companyHTMLParts.push(escapeHtml(companyAddress));
-  if (companyCity) companyHTMLParts.push(escapeHtml(companyCity));
+  if (companyCity)  companyHTMLParts.push(escapeHtml(companyCity));
   const contactLine = [companyEmail, companyPhone].filter(Boolean).join(' · ');
   if (contactLine) companyHTMLParts.push(escapeHtml(contactLine));
   const companyBlock = companyHTMLParts.length
@@ -130,12 +131,8 @@ tfoot td{font-weight:700}
     <div class="recipient">${escapeHtml(recipientHTML)}</div>
   </div>
   <div class="company">
-  <p><strong>Sensorite</strong><br>
-  Block 39, Zhongji Zhicheng Industry Park,<br>
-  Yingguang, Lilin Town, Huizhou, China 516035<br>
-  sales@foxdanch.com · +86 (755) 8947-1769</p>
-</div>
-
+    ${companyBlock}
+  </div>
 </header>
 
 <hr>
