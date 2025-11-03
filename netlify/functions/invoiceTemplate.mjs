@@ -129,7 +129,7 @@ tfoot td{font-weight:700}
     <div class="muted">${escapeHtml(invoiceLabel || '')} · Mode: ${escapeHtml(q?.mode || 'Individual')} · Tier: ${Number(q?.discountPct||0)}% · Currency: USD</div>
     <div class="recipient">${escapeHtml(recipientHTML)}</div>
   </div>
-  <div class="company">${companyBlock}</div>
+  <div class="company"><p><strong>Sensorite</strong></p></div>
 </header>
 
 <hr>
