@@ -24,117 +24,73 @@ export default async (req) => {
     q = {},
     info = null,
     invoiceLabel = '',
-    // ignore dynamic company fields for now per your request
+    companyName = '',
+    companyAddress = '',
+    companyCity = '',
+    companyEmail = '',
+    companyPhone = '',
   } = payload || {};
 
-  /* ---------- helpers ---------- */
+  const items = Array.isArray(q?.items) ? q.items : [];
+
+  // Normalize each item to expected fields
+  const normItems = items.map((it) => {
+    const kind  = it.kind || it.name || '';
+    const model = it.model || '';
+    const size  = it.size  || '';
+    const pcs   = (it.pieces ?? it.pcs ?? '-') || '-';
+    const mat   = it.material || '';
+    const col   = it.color || '';
+    const qty   = Number(it.qty ?? it.quantity ?? 0) || 0;
+    let unit    = Number(it.price ?? it.unit ?? 0) || 0;
+
+    // If no unit but a total is present, back-compute
+    const totalGiven = Number(it.total ?? 0) || 0;
+    if (!unit && qty && totalGiven) unit = +(totalGiven / qty).toFixed(2);
+
+    const total = qty * unit;
+    return { kind, model, size, pcs, mat, col, qty, unit, total };
+  }).filter((r) => r.qty > 0);
+
+  // Money helpers
   const money = (n) =>
     (isFinite(n) ? n : 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
-  // Accept cents or dollars and normalize to dollars
-  const toDollars = (val) => {
-    let n = Number(val) || 0;
-    // Heuristic: most grid values are integer cents (e.g., 2400), treat large integers as cents
-    if (Number.isFinite(n) && Number.isInteger(n) && Math.abs(n) >= 1000) return n / 100;
-    return n;
-  };
+  const msrpSubtotal = normItems.reduce((s, r) => s + r.total, 0);
+  const discountedSubtotal = msrpSubtotal; // no discount math here (can wire later)
+  const saved = msrpSubtotal - discountedSubtotal;
 
-  const esc = (s) =>
-    String(s ?? '')
-      .replace(/&/g,'&amp;')
-      .replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;')
-      .replace(/"/g,'&quot;')
-      .replace(/'/g,'&#39;');
-
-  // Build “recipient” multi-line block
-  const recipientLines = [];
+  // Customer block (info)
+  let recipientLines = [];
   if (info) {
-    const name = [info.first, info.last].filter(Boolean).join(' ').trim() || info.name || '';
-    if (name) recipientLines.push(String(name));
-    if (info.company && info.company !== name) recipientLines.push(String(info.company));
+    if (info.name) recipientLines.push(String(info.name));
+    if (info.company && info.company !== info.name) recipientLines.push(String(info.company));
     if (info.phone) recipientLines.push(`Phone: ${info.phone}`);
     if (info.email) recipientLines.push(`Email: ${info.email}`);
-    if (info.ship)  recipientLines.push(`Ship to: ${info.ship}`);
-    if (info.bill && info.bill !== info.ship && info.bill.trim()) recipientLines.push(`Bill to: ${info.bill}`);
-    if (info.address && !info.ship && !info.bill) recipientLines.push(String(info.address));
+    if (info.address) recipientLines.push(String(info.address));
   }
   const recipientHTML = recipientLines.join('\n') || 'Customer';
 
-  /* ---------- normalize items (q.items first, then q.groups fallback) ---------- */
-  let rawItems = Array.isArray(q?.items) ? q.items.slice() : [];
+  // Company block (DYNAMIC)
+  const companyHTMLParts = [];
+  if (companyName)  companyHTMLParts.push(`<strong>${escapeHtml(companyName)}</strong>`);
+  if (companyAddress) companyHTMLParts.push(escapeHtml(companyAddress));
+  if (companyCity)  companyHTMLParts.push(escapeHtml(companyCity));
+  const contactLine = [companyEmail, companyPhone].filter(Boolean).join(' · ');
+  if (contactLine) companyHTMLParts.push(escapeHtml(contactLine));
+  const companyBlock = companyHTMLParts.length
+    ? `<p>${companyHTMLParts.join('<br/>')}</p>`
+    : '<p><strong>Company</strong></p>';
 
-  if ((!rawItems || rawItems.length === 0) && q && q.groups && typeof q.groups === 'object') {
-    // Flatten groups from the preview builder shape
-    Object.keys(q.groups).forEach((title) => {
-      (q.groups[title] || []).forEach((it) => rawItems.push(it));
-    });
-  }
-
-  const normItems = (rawItems || [])
-    .map((it) => {
-      const kind  = it.kind || it.name || it.pg ? `${it.pg ? (it.pg + ' — ') : ''}${it.kind || it.name || ''}` : '';
-      const model = it.model || '';
-      const size  = it.size  || '';
-      const pcs   = (it.pieces ?? it.pcs ?? '-') || '-';
-      const mat   = it.material || '';
-      const col   = it.color || '';
-      const qty   = Number(it.qty ?? it.quantity ?? 0) || 0;
-
-      // Prefer provided unit/line; accept cents or dollars
-      let unit = it.price != null ? Number(it.price) : (it.unit != null ? Number(it.unit) : 0);
-      let line = it.line != null ? Number(it.line)  : (it.total != null ? Number(it.total) : 0);
-
-      // If only line exists (or only unit), compute the other
-      if (unit && !line && qty) line = unit * qty;
-      if (!unit && line && qty) unit = line / qty;
-
-      // Normalize both to dollars (accept cents)
-      const unit$ = toDollars(unit);
-      const line$ = toDollars(line) || (qty * unit$);
-
-      return { kind, model, size, pcs, mat, col, qty, unit: unit$, total: qty * unit$ || line$ };
-    })
-    .filter((r) => r.qty > 0);
-
-  // Totals (support q.grand/q.msrpSubtotal either in cents or dollars)
-  const msrpSubtotal$ =
-    normItems.reduce((s, r) => s + (Number(r.total) || 0), 0);
-
-  let discountedSubtotal$ = msrpSubtotal$;
-  if (q && (q.grand != null)) {
-    discountedSubtotal$ = toDollars(q.grand);
-  }
-
-  const saved$ =
-    (q && (q.saved != null)) ? toDollars(q.saved) : (msrpSubtotal$ - discountedSubtotal$);
-
-  const tierPct = Number(q?.discountPct || 0) || 0;
-  const modeLabel =
-    q && q.mode
-      ? (q.mode === 'individual' ? 'Individual'
-        : q.mode === 'solid'     ? '60pc master case (solid color)'
-        : q.mode === 'mixed'     ? '60pc master case (mixed color)'
-        : String(q.mode))
-      : 'Individual';
-
-  /* ---------- static company block (per your request) ---------- */
-  const companyBlock = `
-    <p><strong>Sensorite</strong><br>
-    Block 39, Zhongji Zhicheng Industry Park,<br>
-    Yingguang, Lilin Town, Huizhou, China 516035<br>
-    sales@foxdanch.com · +86 (755) 8947-1769</p>
-  `.trim();
-
-  /* ---------- rows ---------- */
+  // Build table rows
   const rowsHTML = normItems.map((r) => {
     return `<tr>
-      <td>${esc(r.kind)}</td>
-      <td>${esc(r.model)}</td>
-      <td>${esc(r.size)}</td>
-      <td>${esc(r.pcs)}</td>
-      <td>${esc(r.mat)}</td>
-      <td>${esc(r.col)}</td>
+      <td>${escapeHtml(r.kind)}</td>
+      <td>${escapeHtml(r.model)}</td>
+      <td>${escapeHtml(r.size)}</td>
+      <td>${escapeHtml(r.pcs)}</td>
+      <td>${escapeHtml(r.mat)}</td>
+      <td>${escapeHtml(r.col)}</td>
       <td style="text-align:right">${r.qty}</td>
       <td style="text-align:right">${money(r.unit)}</td>
       <td style="text-align:right">${money(r.total)}</td>
@@ -170,9 +126,9 @@ tfoot td{font-weight:700}
 
 <header>
   <div class="brand">
-    <h1>${esc((q && q.companyName) || 'Sensorite')} — Quote</h1>
-    <div class="muted">${esc(invoiceLabel || '')} · Mode: ${esc(modeLabel)} · Tier: ${tierPct}% · Currency: USD</div>
-    <div class="recipient">${esc(recipientHTML)}</div>
+    <h1>${escapeHtml(companyName || 'Quote')} — Quote</h1>
+    <div class="muted">${escapeHtml(invoiceLabel || '')} · Mode: ${escapeHtml(q?.mode || 'Individual')} · Tier: ${Number(q?.discountPct||0)}% · Currency: USD</div>
+    <div class="recipient">${escapeHtml(recipientHTML)}</div>
   </div>
   <div class="company">
     ${companyBlock}
@@ -199,9 +155,9 @@ tfoot td{font-weight:700}
     ${rowsHTML}
   </tbody>
   <tfoot>
-    <tr><td colspan="7">MSRP subtotal</td><td colspan="2" style="text-align:right">${money(msrpSubtotal$)}</td></tr>
-    <tr><td colspan="7">Discounted subtotal</td><td colspan="2" style="text-align:right">${money(discountedSubtotal$)}</td></tr>
-    <tr><td colspan="7">You save</td><td colspan="2" style="text-align:right">${money(saved$)}</td></tr>
+    <tr><td colspan="7">MSRP subtotal</td><td colspan="2" style="text-align:right">${money(msrpSubtotal)}</td></tr>
+    <tr><td colspan="7">Discounted subtotal</td><td colspan="2" style="text-align:right">${money(discountedSubtotal)}</td></tr>
+    <tr><td colspan="7">You save</td><td colspan="2" style="text-align:right">${money(saved)}</td></tr>
   </tfoot>
 </table>
 
@@ -218,4 +174,12 @@ tfoot td{font-weight:700}
   });
 };
 
-/* ---- (no dynamic company used now) ---- */
+// ---- utils ----
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
