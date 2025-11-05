@@ -105,6 +105,40 @@ export default async (req) => {
 <style>
 body{font:13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;color:#111;padding:28px;background:#fff}
 header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;gap:16px}
+/* Densify cells and allow wrapping without changing table width */
+table { table-layout: fixed; }                /* keep column widths stable */
+th, td {
+  padding: 4px 6px;                           /* a bit tighter than current 6–8px */
+  white-space: normal;                        /* allow line breaks */
+  overflow-wrap: anywhere;                    /* break long tokens like model #s */
+  word-break: break-word;
+  hyphens: auto;                              /* nicer breaks when possible */
+  vertical-align: middle;
+  font-size: 12px;                            /* was 13px; small, legible shrink */
+  line-height: 1.35;
+}
+
+/* Keep numbers tidy and on one line (Qty / Unit / Total) */
+td:nth-child(7), td:nth-child(8), td:nth-child(9),
+th:nth-child(7), th:nth-child(8), th:nth-child(9) {
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* Make model #s slightly smaller, but still readable */
+td:nth-child(2) { font-size: 11.5px; }
+
+/* Optional: give the first column a touch more room; trade from Material/Color */
+th:nth-child(1), td:nth-child(1) { width: 22%; }  /* Product / Kind */
+th:nth-child(2), td:nth-child(2) { width: 14%; }  /* Model # */
+th:nth-child(3), td:nth-child(3) { width: 9%; }   /* Size */
+th:nth-child(4), td:nth-child(4) { width: 7%; }   /* Pieces */
+th:nth-child(5), td:nth-child(5) { width: 16%; }  /* Material */
+th:nth-child(6), td:nth-child(6) { width: 10%; }  /* Color */
+th:nth-child(7), td:nth-child(7) { width: 6%; }   /* Qty */
+th:nth-child(8), td:nth-child(8) { width: 8%; }   /* Unit */
+th:nth-child(9), td:nth-child(9) { width: 8%; }   /* Total */
+
 .brand{max-width:48%}
 .brand h1{margin:0 0 6px;font-size:20px}
 .company{max-width:48%;text-align:right;font-size:12px;color:#333}
