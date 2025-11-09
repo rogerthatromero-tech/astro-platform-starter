@@ -72,7 +72,7 @@ export default async (req) => {
   .replace(/^_+|_+$/g, "");
 
 
-const now = new Date();
+const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
 const yy = String(now.getFullYear()).slice(2);
 const mm = String(now.getMonth() + 1).padStart(2, "0");
 const dd = String(now.getDate()).padStart(2, "0");
