@@ -75,7 +75,7 @@ const now = new Date();
 const stamp = now
   .toLocaleString("en-US", { timeZone: "America/New_York" })
   .replace(/[^0-9]/g, "")
-  .slice(2, 12); // YYMMDDHHMMSS
+  .slice(2, 14); // YYMMDDHHMMSS
 
 const filename = `Sensorite_Invoice_${customer}_${stamp}.pdf`;
 
