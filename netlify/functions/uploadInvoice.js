@@ -37,7 +37,9 @@ export default async (req) => {
     return json(405, { error: "POST only" });
   }
 
-  cconst token = process.env.DROPBOX_ACCESS_TOKEN;
+  const response = await fetch('/.netlify/functions/getDropboxToken');
+  const { access_token } = await response.json();
+  const token = access_token;
   const basePath = process.env.DROPBOX_INVOICE_PATH || "/invoices";
   if (!token) {
     return json(500, { error: "Missing DROPBOX_ACCESS_TOKEN" });
