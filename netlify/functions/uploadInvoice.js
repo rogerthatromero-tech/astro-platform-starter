@@ -65,16 +65,7 @@ export default async (req) => {
     return json(400, { error: "Invalid JSON body" });
   }
 
-  const original = String(body.filename || "invoice").replace(/[/\\]+/g, "_").replace(/\.pdf$/i, "");
-const customer = String(body.customer_name || "customer")
-  .trim()
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, "-")
-  .replace(/^-+|-+$/g, "");
-const now = new Date();
-const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\..+$/, ""); // YYYYMMDDTHHMMSS
-const filename = `${original}__${customer}__${stamp}.pdf`;
-
+  const filename = String(body.filename || "invoice.pdf").replace(/[/\\]+/g, "_");
   const b64 = body.content_base64;
   const contentType = String(body.content_type || "").toLowerCase();
 
