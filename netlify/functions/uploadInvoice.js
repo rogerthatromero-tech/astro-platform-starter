@@ -71,11 +71,8 @@ export default async (req) => {
   .replace(/[^a-z0-9]+/g, "_")
   .replace(/^_+|_+$/g, "");
 
+
 const now = new Date();
-const stamp = now
-  .toLocaleString("en-US", { timeZone: "America/New_York" })
-  .replace(/[^0-9]/g, "")
-  const now = new Date();
 const yy = String(now.getFullYear()).slice(2);
 const mm = String(now.getMonth() + 1).padStart(2, "0");
 const dd = String(now.getDate()).padStart(2, "0");
@@ -83,6 +80,7 @@ const hh = String(now.getHours()).padStart(2, "0");
 const min = String(now.getMinutes()).padStart(2, "0");
 const ss = String(now.getSeconds()).padStart(2, "0");
 const stamp = `${yy}${mm}${dd}-${hh}${min}${ss}`;
+
 
 
 const filename = `Sensorite_Invoice_${customer}_${stamp}.pdf`;
