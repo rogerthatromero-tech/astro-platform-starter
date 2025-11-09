@@ -65,7 +65,20 @@ export default async (req) => {
     return json(400, { error: "Invalid JSON body" });
   }
 
-  const filename = String(body.filename || "invoice.pdf").replace(/[/\\]+/g, "_");
+  const customer = String(body.customer_name || "customer")
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "_")
+  .replace(/^_+|_+$/g, "");
+
+const now = new Date();
+const stamp = now
+  .toLocaleString("en-US", { timeZone: "America/New_York" })
+  .replace(/[^0-9]/g, "")
+  .slice(2, 12); // YYMMDDHHMMSS
+
+const filename = `Sensorite_Invoice_${customer}_${stamp}.pdf`;
+
   const b64 = body.content_base64;
   const contentType = String(body.content_type || "").toLowerCase();
 
