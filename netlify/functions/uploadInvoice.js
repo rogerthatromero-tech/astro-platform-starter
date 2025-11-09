@@ -37,13 +37,26 @@ export default async (req) => {
     return json(405, { error: "POST only" });
   }
 
-  const response = await fetch('/.netlify/functions/getDropboxToken');
-  const { access_token } = await response.json();
-  const token = access_token;
-  const basePath = process.env.DROPBOX_INVOICE_PATH || "/invoices";
-  if (!token) {
-    return json(500, { error: "Missing DROPBOX_ACCESS_TOKEN" });
-  }
+  const refreshToken = process.env.DROPBOX_REFRESH_TOKEN;
+  const clientId = '8hyi00z3tgw4419';
+  const clientSecret = 'fii9xrqzj0nghtv';
+
+  const tokenRes = await fetch('https://api.dropboxapi.com/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret
+    })
+  });
+
+  const tokenData = await tokenRes.json();
+  const token = tokenData.access_token;
+  const basePath = process.env.DROPBOX_INVOICE_PATH || '/invoices';
+  if (!token) return json(500, { error: 'Missing access token from refresh' });
+
 
   let body;
   try {
