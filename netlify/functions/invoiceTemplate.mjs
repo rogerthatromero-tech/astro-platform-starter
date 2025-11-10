@@ -195,6 +195,24 @@ tfoot td{font-weight:700}
   </tfoot>
 </table>
 
+<section style="margin-top:20px;padding:12px 14px;border:1px solid #ddd;border-radius:8px;background:#f9f9f9;font-size:12.5px;line-height:1.5">
+  <h3 style="margin:0 0 6px;font-size:14px;">Payment Options for Sensorite</h3>
+  <ul style="list-style-type:none;padding:0;margin:0">
+    <li><strong>Paypal:</strong> wxwcn123@163.com</li>
+    <li><strong>Check Payments:</strong> Sensorite Inc — A/C Number: 800-7028-551</li>
+    <li><strong>Wire Payments:</strong><br/>
+      Beneficiary A/C: 800-7028-551<br/>
+      Beneficiary Name: Sensorite Inc<br/>
+      Beneficiary Address: 1401 21st ST, STE R, SACRAMENTO, CA 95811<br/>
+      Beneficiary Country: United States of America<br/>
+      Beneficiary Bank: EAST WEST BANK<br/>
+      Bank Routing Number: 3220-70-381<br/>
+      Bank Address: 9300 Flair Drive, 4th Fl. El Monte, CA 91731, USA
+    </li>
+  </ul>
+</section>
+
+
 <!-- Payment Information -->
 <section style="margin-top:20px;padding:12px 14px;border:1px solid #ddd;border-radius:8px;background:#f9f9f9;font-size:12.5px;line-height:1.5">
   <h3 style="margin:0 0 6px;font-size:14px;">Payment Options</h3>
