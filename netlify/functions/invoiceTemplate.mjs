@@ -195,8 +195,22 @@ tfoot td{font-weight:700}
   </tfoot>
 </table>
 
+<!-- Payment Information -->
+<section style="margin-top:20px;padding:12px 14px;border:1px solid #ddd;border-radius:8px;background:#f9f9f9;font-size:12.5px;line-height:1.5">
+  <h3 style="margin:0 0 6px;font-size:14px;">Payment Options</h3>
+  <ul style="list-style-type:none;padding:0;margin:0">
+    <li><strong>Wire Transfer:</strong> Bank of America — Account No. 123456789 · SWIFT: BOFAUS3N</li>
+    <li><strong>PayPal:</strong> payments@sensorite.com</li>
+    <li><strong>Credit Card:</strong> Visa, MasterCard, and AmEx accepted</li>
+  </ul>
+  <p style="margin-top:8px;color:#666;font-size:11.5px">
+    Please reference your invoice number when sending payment.
+  </p>
+</section>
+
 </body>
 </html>`;
+
 
   return new Response(html, {
     status: 200,
